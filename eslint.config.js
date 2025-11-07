@@ -2,8 +2,6 @@ import eslint from '@eslint/js';
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
 import importPlugin from 'eslint-plugin-import';
-import prettierConfig from 'eslint-config-prettier';
-import prettierPlugin from 'eslint-plugin-prettier';
 
 export default [
   // ESLintの推奨設定
@@ -38,15 +36,11 @@ export default [
     plugins: {
       '@typescript-eslint': tseslint,
       'import': importPlugin,
-      'prettier': prettierPlugin,
     },
     
     rules: {
       // TypeScript推奨ルール
       ...tseslint.configs.recommended.rules,
-      
-      // Prettierルール
-      'prettier/prettier': 'error',
       
       // Import関連ルール
       'import/order': ['error', {
@@ -69,9 +63,6 @@ export default [
       'no-debugger': 'warn',
     },
   },
-  
-  // Prettier設定（ルールの競合を回避）
-  prettierConfig,
   
   {
     // 無視するファイル

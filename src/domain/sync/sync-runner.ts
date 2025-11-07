@@ -5,6 +5,8 @@ import { logger } from '../../infrastructure/logging/logger';
 import type { Database } from '../../infrastructure/supabase/client';
 import { getSupabaseClient } from '../../infrastructure/supabase/client';
 import { createBaseError } from '../../shared/errors/base-error';
+import type { DiscordMessage } from '../common/chunking';
+import { createChunkingService } from '../common/chunking-service';
 
 type SyncOperationRow = Database['public']['Tables']['sync_operations']['Row'];
 
@@ -18,6 +20,7 @@ export interface SyncRunnerConfig {
 export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) {
   const supabase = getSupabaseClient();
   const fetcher = createMessageFetcher(client);
+  const chunkingService = createChunkingService();
   const pollIntervalMs = config.pollIntervalMs ?? 5000;
 
   /**
@@ -129,22 +132,158 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
       jump_link: `https://discord.com/channels/${guildId}/${msg.channelId}/${msg.id}`,
     }));
 
-    // バッチで保存（Supabase は一度に大量のレコードを insert できるが、念のため分割）
-    const batchSize = 100;
+    // バッチで保存
+    const batchSize = 50;
+    const totalBatches = Math.ceil(rows.length / batchSize);
+    let savedCount = 0;
+
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
-      const { error } = await supabase.from('messages').upsert(batch, {
-        onConflict: 'message_id',
-        ignoreDuplicates: false,
-      });
+      const batchNum = Math.floor(i / batchSize) + 1;
 
-      if (error) {
-        logger.error('Failed to save messages', error);
-        throw createBaseError('メッセージの保存に失敗しました', 'MESSAGE_SAVE_FAILED', { error });
+      let retries = 0;
+      const maxRetries = 3;
+
+      while (retries <= maxRetries) {
+        try {
+          const { error } = await supabase.from('messages').upsert(batch, {
+            onConflict: 'message_id',
+            ignoreDuplicates: false,
+          });
+
+          if (error) {
+            throw error;
+          }
+
+          savedCount += batch.length;
+          logger.info(
+            `  → Saved batch ${batchNum}/${totalBatches} (${savedCount}/${rows.length} messages)`
+          );
+          break;
+        } catch (error) {
+          retries++;
+          if (retries > maxRetries) {
+            logger.error(`Failed to save batch ${batchNum} after ${maxRetries} retries`, error);
+            throw createBaseError('メッセージの保存に失敗しました', 'MESSAGE_SAVE_FAILED', {
+              error,
+            });
+          }
+
+          const waitTime = Math.pow(2, retries) * 1000;
+          logger.warn(
+            `  → Batch ${batchNum} failed, retrying in ${waitTime}ms (attempt ${retries}/${maxRetries})`,
+            error
+          );
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+        }
       }
     }
 
     logger.info(`Saved ${messages.length} messages to database`);
+  };
+
+  /**
+   * メッセージをチャンク化して message_windows と embed_queue に保存
+   */
+  const createWindows = async (
+    guildId: string,
+    messages: Array<{
+      id: string;
+      channelId: string;
+      threadId?: string;
+      content: string;
+      createdAt: Date;
+    }>
+  ): Promise<void> => {
+    if (messages.length === 0) return;
+
+    // カテゴリ → チャンネル → 日付でグループ化
+    const groups = new Map<string, typeof messages>();
+
+    for (const msg of messages) {
+      const dateKey = msg.createdAt.toISOString().split('T')[0];
+      const channelKey = msg.threadId ?? msg.channelId;
+      const key = `${channelKey}:${dateKey}`;
+
+      if (!groups.has(key)) {
+        groups.set(key, []);
+      }
+      groups.get(key)!.push(msg);
+    }
+
+    let totalWindows = 0;
+
+    // 各グループをチャンク化
+    for (const [key, groupMessages] of groups) {
+      const [_channelKey, dateStr] = key.split(':');
+      const isThread = groupMessages[0].threadId !== undefined;
+
+      // DiscordMessage 形式に変換
+      const discordMessages: DiscordMessage[] = groupMessages.map((msg) => ({
+        id: msg.id,
+        content: msg.content,
+        createdAt: msg.createdAt,
+        isTopLevel: !isThread, // スレッド内は false
+      }));
+
+      // チャンク化
+      const windows = await chunkingService.chunk(discordMessages);
+
+      if (windows.length === 0) continue;
+
+      // message_windows に保存
+      const windowRows = windows.map((window) => ({
+        guild_id: guildId,
+        channel_id: groupMessages[0].channelId,
+        thread_id: groupMessages[0].threadId ?? null,
+        date: dateStr,
+        window_seq: window.windowSeq,
+        message_ids: window.messageIds,
+        start_at: window.startAt.toISOString(),
+        end_at: window.endAt.toISOString(),
+        token_est: window.tokenCount,
+        text: window.text,
+      }));
+
+      const { data: insertedWindows, error: windowError } = await supabase
+        .from('message_windows')
+        .upsert(windowRows, {
+          onConflict: 'channel_id,date,window_seq',
+          ignoreDuplicates: false,
+        })
+        .select('window_id');
+
+      if (windowError) {
+        logger.error('Failed to save message windows', windowError);
+        throw createBaseError('ウィンドウの保存に失敗しました', 'WINDOW_SAVE_FAILED', {
+          error: windowError,
+        });
+      }
+
+      // embed_queue に投入
+      if (insertedWindows && insertedWindows.length > 0) {
+        const queueRows = insertedWindows.map((w) => ({
+          window_id: w.window_id,
+          priority: 0,
+          status: 'ready',
+        }));
+
+        const { error: queueError } = await supabase.from('embed_queue').upsert(queueRows, {
+          onConflict: 'window_id',
+          ignoreDuplicates: true,
+        });
+
+        if (queueError) {
+          logger.warn('Failed to enqueue windows for embedding', queueError);
+        } else {
+          totalWindows += insertedWindows.length;
+        }
+      }
+    }
+
+    logger.info(
+      `✓ Created ${totalWindows} windows from ${groups.size} channel-date groups and enqueued for embedding`
+    );
   };
 
   /**
@@ -159,9 +298,13 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
 
       // メッセージを取得
       const since = job.since ? new Date(job.since) : undefined;
+      logger.info(
+        `Starting message fetch from guild ${job.guild_id} (since: ${since?.toISOString() ?? 'beginning'})`
+      );
+
       const messages = await fetcher.fetchMessagesFromGuild(job.guild_id, { since });
 
-      logger.info(`Fetched ${messages.length} messages from guild ${job.guild_id}`);
+      logger.info(`✓ Fetched ${messages.length} messages from guild ${job.guild_id}`);
 
       if (messages.length === 0) {
         await completeJob(job.id, true);
@@ -170,15 +313,22 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
 
       // 進捗を更新
       await updateProgress(job.id, 30, 100, 'メッセージ保存中...');
+      logger.info(`Saving ${messages.length} messages to database...`);
 
       // メッセージを保存
       await saveMessages(job.guild_id, messages);
+      logger.info(`✓ Saved ${messages.length} messages`);
 
       // 進捗を更新
       await updateProgress(job.id, 60, 100, 'チャンク処理中...');
+      logger.info(`Starting chunking for ${messages.length} messages...`);
 
-      // TODO: チャンク化と埋め込み生成はここに追加
-      // 現在は保存までで完了とする
+      // チャンク化と embed_queue への投入
+      await createWindows(job.guild_id, messages);
+      logger.info(`✓ Chunking complete`);
+
+      // 進捗を更新
+      await updateProgress(job.id, 90, 100, 'カーソル更新中...');
 
       // sync_cursors を更新
       const { error: cursorError } = await supabase.from('sync_cursors').upsert({

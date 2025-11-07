@@ -8,6 +8,20 @@
       "when": 1762522854695,
       "tag": "0000_neat_jubilee",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1762526473471,
+      "tag": "0001_bumpy_iron_monger",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1762528363466,
+      "tag": "0002_flawless_synch",
+      "breakpoints": true
     }
   ]
 }

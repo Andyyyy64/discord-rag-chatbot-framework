@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 import { loadEnv } from '../../config/env';
 
-// データベーステーブルの型定義
+// データベーステーブルの型定義 todo これ schema.tsから取得　これはやべーよ？
 export type Database = {
   public: {
     Tables: {
@@ -135,6 +135,96 @@ export type Database = {
           token_count?: number | null;
           allowed_role_ids?: string[] | null;
           allowed_user_ids?: string[] | null;
+        };
+        Relationships: [];
+      };
+      message_windows: {
+        Row: {
+          window_id: string;
+          guild_id: string;
+          category_id: string | null;
+          channel_id: string;
+          thread_id: string | null;
+          date: string;
+          window_seq: number;
+          message_ids: string[];
+          start_at: string;
+          end_at: string;
+          token_est: number | null;
+          text: string | null;
+        };
+        Insert: {
+          window_id?: string;
+          guild_id: string;
+          category_id?: string | null;
+          channel_id: string;
+          thread_id?: string | null;
+          date: string;
+          window_seq: number;
+          message_ids: string[];
+          start_at: string;
+          end_at: string;
+          token_est?: number | null;
+          text?: string | null;
+        };
+        Update: {
+          window_id?: string;
+          guild_id?: string;
+          category_id?: string | null;
+          channel_id?: string;
+          thread_id?: string | null;
+          date?: string;
+          window_seq?: number;
+          message_ids?: string[];
+          start_at?: string;
+          end_at?: string;
+          token_est?: number | null;
+          text?: string | null;
+        };
+        Relationships: [];
+      };
+      message_embeddings: {
+        Row: {
+          window_id: string;
+          embedding: string;
+          updated_at: string | null;
+        };
+        Insert: {
+          window_id: string;
+          embedding: string;
+          updated_at?: string | null;
+        };
+        Update: {
+          window_id?: string;
+          embedding?: string;
+          updated_at?: string | null;
+        };
+        Relationships: [];
+      };
+      embed_queue: {
+        Row: {
+          id: string;
+          window_id: string;
+          priority: number;
+          status: string;
+          attempts: number;
+          updated_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          window_id: string;
+          priority?: number;
+          status?: string;
+          attempts?: number;
+          updated_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          window_id?: string;
+          priority?: number;
+          status?: string;
+          attempts?: number;
+          updated_at?: string | null;
         };
         Relationships: [];
       };

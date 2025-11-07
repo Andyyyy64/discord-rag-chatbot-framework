@@ -1,4 +1,15 @@
-import { boolean, integer, jsonb, pgTable, text, timestamp, uuid, date, customType } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+  date,
+  customType,
+  unique,
+} from 'drizzle-orm/pg-core';
 
 const vector3072 = customType<{ data: number[]; notNull: true; default: false }>({
   dataType() {
@@ -46,20 +57,30 @@ export const messages = pgTable('messages', {
   allowedUserIds: text('allowed_user_ids').array(),
 });
 
-export const messageWindows = pgTable('message_windows', {
-  windowId: uuid('window_id').primaryKey().defaultRandom(),
-  guildId: text('guild_id').notNull(),
-  categoryId: text('category_id'),
-  channelId: text('channel_id').notNull(),
-  threadId: text('thread_id'),
-  date: date('date').notNull(),
-  windowSeq: integer('window_seq').notNull(),
-  messageIds: text('message_ids').array().notNull(),
-  startAt: timestamp('start_at', { withTimezone: true }).notNull(),
-  endAt: timestamp('end_at', { withTimezone: true }).notNull(),
-  tokenEst: integer('token_est'),
-  textBody: text('text'),
-});
+export const messageWindows = pgTable(
+  'message_windows',
+  {
+    windowId: uuid('window_id').primaryKey().defaultRandom(),
+    guildId: text('guild_id').notNull(),
+    categoryId: text('category_id'),
+    channelId: text('channel_id').notNull(),
+    threadId: text('thread_id'),
+    date: date('date').notNull(),
+    windowSeq: integer('window_seq').notNull(),
+    messageIds: text('message_ids').array().notNull(),
+    startAt: timestamp('start_at', { withTimezone: true }).notNull(),
+    endAt: timestamp('end_at', { withTimezone: true }).notNull(),
+    tokenEst: integer('token_est'),
+    textBody: text('text'),
+  },
+  (table) => ({
+    uniqueChannelDateSeq: unique('unique_channel_date_seq').on(
+      table.channelId,
+      table.date,
+      table.windowSeq
+    ),
+  })
+);
 
 export const messageEmbeddings = pgTable('message_embeddings', {
   windowId: uuid('window_id')
@@ -103,11 +124,19 @@ export const syncChunks = pgTable('sync_chunks', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 });
 
-export const embedQueue = pgTable('embed_queue', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  messageId: text('message_id').notNull(),
-  priority: integer('priority').notNull().default(0),
-  status: text('status').notNull().default('ready'),
-  attempts: integer('attempts').notNull().default(0),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-});
+export const embedQueue = pgTable(
+  'embed_queue',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    windowId: uuid('window_id')
+      .references(() => messageWindows.windowId, { onDelete: 'cascade' })
+      .notNull(),
+    priority: integer('priority').notNull().default(0),
+    status: text('status').notNull().default('ready'),
+    attempts: integer('attempts').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  },
+  (table) => ({
+    uniqueWindowId: unique('unique_window_id').on(table.windowId),
+  })
+);

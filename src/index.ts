@@ -2,6 +2,7 @@ import http from 'node:http';
 
 import { loadEnv } from './config/env';
 import { buildRouter } from './domain/discord/router/build-router';
+import { createEmbedWorker } from './domain/embed/embed-worker';
 import { createSyncRunner } from './domain/sync/sync-runner';
 import { createDiscordClient } from './infrastructure/discord/discord-client';
 import { registerGlobalCommands } from './infrastructure/discord/register-commands';
@@ -19,10 +20,16 @@ async function bootstrap() {
   client.once('clientReady', () => {
     logger.info(`Logged in as ${client.user?.tag}`);
 
-    // ワーカーを起動（バックグラウンドで実行）
+    // Sync ワーカーを起動（バックグラウンドで実行）
     const runner = createSyncRunner(client);
     runner.start().catch((error) => {
       logger.error('Sync runner crashed', error);
+    });
+
+    // Embed ワーカーを起動（バックグラウンドで実行）
+    const embedWorker = createEmbedWorker(client);
+    embedWorker.start().catch((error) => {
+      logger.error('Embed worker crashed', error);
     });
   });
 
