@@ -1,2 +1,0 @@
-ALTER TABLE "embed_queue" ADD CONSTRAINT "unique_window_id" UNIQUE("window_id");--> statement-breakpoint
-ALTER TABLE "message_windows" ADD CONSTRAINT "unique_channel_date_seq" UNIQUE("channel_id","date","window_seq");

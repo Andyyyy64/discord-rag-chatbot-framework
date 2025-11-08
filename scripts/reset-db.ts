@@ -1,45 +1,44 @@
-import postgres from 'postgres';
-
-import { loadEnv } from '../src/config/env';
+import { getSupabaseClient } from '../src/infrastructure/supabase/client.js';
 
 /**
  * データベースの全テーブルをリセットするスクリプト
- * TRUNCATEコマンドで高速に全データを削除
+ * Supabase JS ClientのRPC経由で全データを削除
  */
 async function resetDatabase() {
   console.log('🔄 データベースリセットを開始します...');
 
-  const env = loadEnv();
-  
-  // DATABASE_URLを使用してPostgresに接続
-  const sql = postgres(env.DATABASE_URL, {
-    ssl: 'require',
-  });
+  const supabase = getSupabaseClient();
 
   try {
-    // TRUNCATEで全テーブルを一括削除（外部キー制約も自動的に処理）
+    // 各テーブルを個別に削除（Supabase JS ClientではTRUNCATEの直接実行ができないため）
     const tables = [
       'embed_queue',
-      'message_embeddings',
+      'message_embeddings', 
       'message_windows',
       'messages',
+      'sync_chunks',
       'sync_cursors',
       'sync_operations',
-    ];
+      'threads',
+      'channels',
+    ] as const;
 
-    console.log('  ➤ 全テーブルをTRUNCATEで削除中...');
+    console.log('  ➤ 全テーブルをクリア中...');
 
-    // CASCADE を使って外部キー制約も含めて削除
-    const tableList = tables.join(', ');
-    await sql.unsafe(`TRUNCATE TABLE ${tableList} CASCADE`);
+    for (const table of tables) {
+      const { error } = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      
+      if (error && error.code !== 'PGRST116') {
+        console.warn(`  ⚠️  ${table}: ${error.message}`);
+      } else {
+        console.log(`  ✓ ${table}`);
+      }
+    }
 
     console.log('  ✅ 全テーブルをクリアしました');
     console.log('\n✨ データベースのリセットが完了しました！');
-
-    await sql.end();
   } catch (error) {
     console.error('\n❌ データベースのリセット中にエラーが発生しました:', error);
-    await sql.end();
     process.exit(1);
   }
 }

@@ -1,12 +1,13 @@
 import { logger } from '../../infrastructure/logging/logger';
-import type { Database } from '../../infrastructure/supabase/client';
 import { getSupabaseClient } from '../../infrastructure/supabase/client';
+import type { TypedSyncOperation } from '../../infrastructure/supabase/database-extensions.types';
+import type { Database } from '../../infrastructure/supabase/database.types';
 import { createBaseError } from '../../shared/errors/base-error';
 
 import type { SyncCommandInput, SyncJobStatus, SyncMode } from './types';
 
 // データベースから返される行の型定義
-type SyncOperationRow = Database['public']['Tables']['sync_operations']['Row'];
+type SyncOperationRow = TypedSyncOperation;
 type SyncCursorRow = Database['public']['Tables']['sync_cursors']['Row'];
 
 /**

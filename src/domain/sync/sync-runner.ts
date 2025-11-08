@@ -2,13 +2,13 @@ import type { Client } from 'discord.js';
 
 import { createMessageFetcher } from '../../infrastructure/discord/message-fetcher';
 import { logger } from '../../infrastructure/logging/logger';
-import type { Database } from '../../infrastructure/supabase/client';
 import { getSupabaseClient } from '../../infrastructure/supabase/client';
+import type { TypedSyncOperation } from '../../infrastructure/supabase/database-extensions.types';
 import { createBaseError } from '../../shared/errors/base-error';
 import type { DiscordMessage } from '../common/chunking';
 import { createChunkingService } from '../common/chunking-service';
 
-type SyncOperationRow = Database['public']['Tables']['sync_operations']['Row'];
+type SyncOperationRow = TypedSyncOperation;
 
 export interface SyncRunnerConfig {
   pollIntervalMs?: number;

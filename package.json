@@ -11,9 +11,7 @@
     "lint": "eslint . --ext .ts",
     "check": "eslint . --ext .ts && tsc -p tsconfig.json --noEmit",
     "deploy": "bash scripts/deploy.sh",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio",
+    "db:types": "bash scripts/generate-db-types.sh",
     "db:reset": "node --loader ts-node/esm --experimental-specifier-resolution=node ./scripts/reset-db.ts"
   },
   "dependencies": {
@@ -24,7 +22,6 @@
     "dotenv": "^16.4.5",
     "js-tiktoken": "^1.0.10",
     "p-limit": "^4.0.0",
-    "postgres": "^3.4.4",
     "tslog": "^4.9.2",
     "zod": "^3.23.8"
   },
@@ -32,13 +29,12 @@
     "@types/node": "^20.11.30",
     "@typescript-eslint/eslint-plugin": "^8.46.3",
     "@typescript-eslint/parser": "^8.46.3",
-    "drizzle-kit": "^0.31.6",
-    "drizzle-orm": "^0.44.7",
     "eslint": "^9.9.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-import": "^2.29.1",
     "eslint-plugin-prettier": "^5.2.1",
     "prettier": "^3.3.3",
+    "supabase": "^2.54.11",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "tsup": "^8.1.0",
