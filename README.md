@@ -1,6 +1,6 @@
 # Discord RAG Chatbot Framework
 
-Discord上の全メッセージをembeddingしてchatできるdiscordbotの構築フレームワーク
+Discord上の全メッセージをembeddingして対話できるBotを構築するためのフレームワーク
 
 ## 必要なもの
 
