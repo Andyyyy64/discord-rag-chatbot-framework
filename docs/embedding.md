@@ -277,11 +277,3 @@ ready → ready     (リトライ可能なエラー)
 | バッチサイズ | 500 | `createEmbedWorker()` |
 | 並列数 | 15 | `createEmbedWorker()` |
 | 最大リトライ | 10 (API), 5 (Worker) | `embedWindow()`, `processWindow()` |
-
-## 参考実装
-
-- Gemini Embedding API: https://ai.google.dev/docs/embeddings
-- pgvector halfvec: https://github.com/pgvector/pgvector#half-precision-vectors
-- p-limit: https://github.com/sindresorhus/p-limit
-
-

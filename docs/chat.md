@@ -248,11 +248,3 @@
 ### 3. メタデータフィルタリング
 
 チャンネル、日付範囲、ユーザーなどでフィルタリング可能に。
-
-## 関連ドキュメント
-
-- [embedding.md](./embedding.md) - Embedding生成の詳細
-- pgvector演算子: https://github.com/pgvector/pgvector#operators
-- HNSW詳細: https://arxiv.org/abs/1603.09320
-- RRF統合: https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf
-
