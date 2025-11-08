@@ -28,9 +28,7 @@ export function createChatController(service = createChatService()): CommandCont
         query,
       });
 
-      const citations = answer.citations.map((c) => `${c.label}: ${c.jumpLink}`).join('\n');
-
-      await interaction.editReply(`**回答**\n${answer.answer}\n\n**出典**\n${citations || 'なし'}`);
+      await interaction.editReply(`**回答**\n${answer.answer}`);
     } catch (error) {
       logger.error('Chat command failed', error);
       await interaction.editReply('回答を生成できませんでした。後ほど再度お試しください。');
