@@ -14,8 +14,10 @@ const envSchema = z.object({
   EMBEDDING_DIM: z.coerce.number().default(3072),
   RERANK_PROVIDER: z.string().default('none'),
   RERANK_MODEL: z.string().default('rerank-3.5'),
-  RERANK_TOPK: z.coerce.number().default(5),
+  RERANK_TOPK: z.coerce.number().default(20),
   COHERE_API_KEY: z.string().optional(),
+  // RAG検索の候補数設定
+  TOP_CANDIDATES_LIMIT: z.coerce.number().default(50),
 });
 
 export type Env = z.infer<typeof envSchema>;

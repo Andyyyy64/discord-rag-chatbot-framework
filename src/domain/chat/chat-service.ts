@@ -26,11 +26,11 @@ interface MessageWindowRecord {
 export function createChatService(rerankService = createRerankService()) {
   const supabase = getSupabaseClient();
   const env = loadEnv();
-  const rerankTopK = Math.max(1, env.RERANK_TOPK ?? 5);
+  const rerankTopK = Math.max(1, env.RERANK_TOPK ?? 10);
   const model = new GoogleGenerativeAI(env.GEMINI_API_KEY).getGenerativeModel({
     model: env.CHAT_MODEL,
     generationConfig: {
-      temperature: 0.3,
+      temperature: 0.5,
       topP: 0.9,
       maxOutputTokens: 2048,
     },
@@ -54,9 +54,13 @@ export function createChatService(rerankService = createRerankService()) {
       };
     }
 
-    logger.info(`[Chat] Step 3: Found ${windows.length} candidate windows, selecting best for prompt...`);
+    logger.info(
+      `[Chat] Step 3: Found ${windows.length} candidate windows (rerankTopK=${rerankTopK}), selecting best for prompt...`
+    );
     const selectedWindows = await selectWindowsForPrompt(input, windows);
-    logger.info(`[Chat] Step 4: Selected ${selectedWindows.length} windows for generation`);
+    logger.info(
+      `[Chat] Step 4: Selected ${selectedWindows.length} windows for generation (from ${windows.length} candidates)`
+    );
 
     // リトリーバルした内容をログ出力
     logger.info(`[Chat] Step 5: Retrieved content details:`);
@@ -146,7 +150,8 @@ export function createChatService(rerankService = createRerankService()) {
         return [];
       }
 
-      // window 情報を取得し、類似度順に整列（上位15件）
+      // window 情報を取得し、類似度順に整列
+      const topCandidatesLimit = env.TOP_CANDIDATES_LIMIT ?? 50;
       const windowIds = matched.map((m: { window_id: string }) => m.window_id);
       const { data: windows, error: windowError } = await supabase
         .from('message_windows')
@@ -162,7 +167,7 @@ export function createChatService(rerankService = createRerankService()) {
       const ordered = matched
         .map((m: { window_id: string; similarity: number }) => byId.get(m.window_id))
         .filter((w): w is MessageWindowRecord => Boolean(w))
-        .slice(0, 15);
+        .slice(0, topCandidatesLimit);
 
       logger.info(
         `[Chat] Step 2-4: Vector search complete (${Date.now() - searchStart}ms total), returning top ${ordered.length}`
@@ -178,21 +183,41 @@ export function createChatService(rerankService = createRerankService()) {
    * プロンプトを構築する
    */
   const buildPrompt = (input: ChatCommandInput, windows: MessageWindowRecord[]): string => {
+    // チャンネルごとにグループ化して見やすく
+    const channelGroups = new Map<string, MessageWindowRecord[]>();
+    for (const w of windows) {
+      if (!channelGroups.has(w.channel_id)) {
+        channelGroups.set(w.channel_id, []);
+      }
+      channelGroups.get(w.channel_id)!.push(w);
+    }
+
     const context = windows
-      .map((w) => `(${w.start_at} – ${w.end_at})\n${w.text ?? '(内容なし)'}`)
+      .map((w, idx) => {
+        const date = new Date(w.start_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+        const channelNote = w.channel_id === input.channelId ? '' : ' (別チャンネル)';
+        return `--- 会話 ${idx + 1} (${date}${channelNote}) ---\n${w.text ?? '(内容なし)'}`;
+      })
       .join('\n\n');
 
     return [
-      'あなたはDiscordサーバー専用のRAGアシスタントです。',
-      '以下の制約を必ず守ってください:',
-      '1. 回答は日本語を既定とし、必要に応じて英語を混在してもよい。',
-      '2. 情報が不足している場合は率直に不足を伝える。',
-      '3. 提供されたコンテキストのみを元に回答する。',
+      'あなたはDiscordサーバーの会話アシスタントです。過去の会話から質問に答えます。',
       '',
-      '# コンテキスト',
+      '## あなたの役割',
+      '- 提供された会話ログを分析し、質問に答える',
+      '- 必要に応じて要約・まとめを行う',
+      '- 会話の流れから文脈を理解し、合理的な推論をする',
+      '- 情報が本当に不足している場合のみ「わかりません」と答える',
+      '',
+      '## 回答スタイル',
+      '- 日本語で簡潔に答える',
+      '- 「〜について話していました」「〜という話題が出ました」のように自然な言い回しで',
+      '- 長い場合は箇条書きや要約で見やすく',
+      '',
+      '# 過去の会話ログ',
       context,
       '',
-      `# ユーザー (${input.userId}) からの質問`,
+      '# 質問',
       input.query,
     ].join('\n');
   };
