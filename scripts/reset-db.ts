@@ -12,7 +12,7 @@ async function withRetry<T>(
   delayMs = 1000
 ): Promise<T> {
   let lastError: unknown;
-  
+
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn();
@@ -24,7 +24,7 @@ async function withRetry<T>(
       }
     }
   }
-  
+
   throw lastError;
 }
 
@@ -90,17 +90,17 @@ async function resetDatabase() {
           while (consecutiveErrors < maxConsecutiveErrors) {
             try {
               // 上位N件を取得（リトライ付き）
-              const { data: batch, error: fetchError } = await withRetry(
+              const { data: batch } = await withRetry(
                 async () => {
                   const result = await supabase
                     .from(table)
                     .select('window_id')
                     .limit(batchSize);
-                  
+
                   if (result.error) {
                     throw new Error(`Fetch error: ${result.error.message}`);
                   }
-                  
+
                   return result;
                 },
                 3,
@@ -123,11 +123,11 @@ async function resetDatabase() {
                       .from(table)
                       .delete()
                       .in('window_id', ids);
-                    
+
                     if (result.error) {
                       throw new Error(`Delete error: ${result.error.message}`);
                     }
-                    
+
                     return result;
                   },
                   3,
@@ -149,16 +149,16 @@ async function resetDatabase() {
             } catch (error) {
               consecutiveErrors++;
               console.log(`\n  ⚠️  エラーが発生しました (${consecutiveErrors}/${maxConsecutiveErrors})`);
-              
+
               if (error instanceof Error) {
                 console.log(`  ℹ️  エラー詳細: ${error.message}`);
               }
-              
+
               if (consecutiveErrors >= maxConsecutiveErrors) {
                 console.log(`  ⚠️  ${table}: 連続エラーが多すぎるためスキップします`);
                 break;
               }
-              
+
               // 次のバッチまで少し待機
               await new Promise(resolve => setTimeout(resolve, 3000));
             }
@@ -193,13 +193,13 @@ async function resetDatabase() {
       } catch (error) {
         // エラーの詳細を表示
         console.log(`  ⚠️  ${table}テーブルの削除中にエラーが発生しました`);
-        
+
         if (error instanceof Error) {
           console.log(`     エラー: ${error.message}`);
           if (error.stack) {
             console.log(`     スタックトレース: ${error.stack.split('\n').slice(0, 3).join('\n')}`);
           }
-          
+
           // fetch failedエラーの場合、追加情報を表示
           if (error.message.includes('fetch failed')) {
             console.log(`     💡 ヒント: ネットワーク接続を確認してください`);
@@ -210,7 +210,7 @@ async function resetDatabase() {
         } else {
           console.log(`     エラー: ${String(error)}`);
         }
-        
+
         console.log(`  ℹ️  ${table}テーブルはスキップして続行します\n`);
       }
     }
