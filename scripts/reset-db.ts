@@ -1,19 +1,38 @@
-import { getSupabaseClient } from '../src/infrastructure/supabase/client.js';
+import dotenv from 'dotenv';
+import postgres from 'postgres';
+
+dotenv.config();
 
 /**
  * データベースの全テーブルをリセットするスクリプト
- * Supabase JS ClientのRPC経由で全データを削除
+ * PostgreSQL直接接続でTRUNCATE実行
  */
 async function resetDatabase() {
   console.log('🔄 データベースリセットを開始します...');
 
-  const supabase = getSupabaseClient();
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    console.error('❌ DATABASE_URLが設定されていません');
+    process.exit(1);
+  }
+
+  // PostgreSQL接続（タイムアウト設定を長くする）
+  const sql = postgres(databaseUrl, {
+    max: 1,
+    idle_timeout: 0,
+    connect_timeout: 30,
+  });
 
   try {
-    // 各テーブルを個別に削除（Supabase JS ClientではTRUNCATEの直接実行ができないため）
+    console.log('  ➤ 全テーブルをクリア中...');
+
+    // statement_timeoutを60秒に設定
+    await sql`SET statement_timeout = '60s'`;
+
+    // 全テーブルをTRUNCATEで削除（CASCADE指定で外部キー制約も考慮）
     const tables = [
       'embed_queue',
-      'message_embeddings', 
+      'message_embeddings',
       'message_windows',
       'messages',
       'sync_chunks',
@@ -21,17 +40,14 @@ async function resetDatabase() {
       'sync_operations',
       'threads',
       'channels',
-    ] as const;
-
-    console.log('  ➤ 全テーブルをクリア中...');
+    ];
 
     for (const table of tables) {
-      const { error } = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      
-      if (error && error.code !== 'PGRST116') {
-        console.warn(`  ⚠️  ${table}: ${error.message}`);
-      } else {
+      try {
+        await sql`TRUNCATE TABLE ${sql(table)} CASCADE`;
         console.log(`  ✓ ${table}`);
+      } catch (error) {
+        console.warn(`  ⚠️  ${table}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -40,6 +56,8 @@ async function resetDatabase() {
   } catch (error) {
     console.error('\n❌ データベースのリセット中にエラーが発生しました:', error);
     process.exit(1);
+  } finally {
+    await sql.end();
   }
 }
 
