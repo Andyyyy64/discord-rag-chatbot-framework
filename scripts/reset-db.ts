@@ -27,60 +27,103 @@ async function resetDatabase() {
     console.log('  ➤ 全テーブルをクリア中...');
 
     // 外部キー制約を考慮して、依存関係の逆順で削除
+    // message_embeddingsはmessage_windowsのON DELETE CASCADEで自動削除される
     const tables = [
       'embed_queue',
-      'message_embeddings',
-      'message_windows',
+      'message_windows',  // message_embeddingsも同時に削除される
       'messages',
       'sync_chunks',
-      'sync_cursors',
       'sync_operations',
+      'sync_cursors',
       'threads',
       'channels',
     ];
 
     for (const table of tables) {
       try {
-        // テーブルごとに適切な削除条件を設定
-        let query;
-        
-        // UUIDのidカラムを持つテーブル
-        if (['embed_queue', 'sync_operations', 'sync_chunks'].includes(table)) {
-          query = supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        // message_windowsは大量データでタイムアウトする可能性があるためバッチ削除
+        if (table === 'message_windows') {
+          console.log(`  ➤ ${table}: バッチ削除中...`);
+          let totalDeleted = 0;
+          const batchSize = 500;
+
+          // 小さいバッチで繰り返し削除
+          while (true) {
+            // 上位N件を取得
+            const { data: batch, error: fetchError } = await supabase
+              .from(table)
+              .select('window_id')
+              .limit(batchSize);
+
+            if (fetchError) {
+              throw fetchError;
+            }
+
+            if (!batch || batch.length === 0) {
+              break;
+            }
+
+            // 少量のIDずつ削除（.in()の制限を考慮）
+            const chunkSize = 500;
+            for (let i = 0; i < batch.length; i += chunkSize) {
+              const chunk = batch.slice(i, i + chunkSize);
+              const ids = chunk.map(row => row.window_id);
+
+              const { error: deleteError, count } = await supabase
+                .from(table)
+                .delete()
+                .in('window_id', ids);
+
+              if (deleteError) {
+                console.warn(`\n  警告: バッチ削除に失敗: ${deleteError.message}`);
+              } else {
+                totalDeleted += count ?? chunk.length;
+              }
+            }
+
+            process.stdout.write(`\r  ➤ ${table}: ${totalDeleted}行削除中...`);
+
+            // バッチサイズより少ない場合は最後のバッチ
+            if (batch.length < batchSize) {
+              break;
+            }
+          }
+          console.log(`\r  ✓ ${table} (${totalDeleted}行削除)          `);
+        } else {
+          // 通常のテーブルは一括削除
+          let query;
+
+          if (['embed_queue', 'sync_operations', 'sync_chunks'].includes(table)) {
+            query = supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+          } else if (table === 'messages') {
+            query = supabase.from(table).delete().neq('message_id', '');
+          } else if (table === 'channels') {
+            query = supabase.from(table).delete().neq('channel_id', '');
+          } else if (table === 'threads') {
+            query = supabase.from(table).delete().neq('thread_id', '');
+          } else if (table === 'sync_cursors') {
+            query = supabase.from(table).delete().neq('guild_id', '');
+          } else {
+            console.warn(`  ⚠️  ${table}: スキップ（削除条件が未定義）`);
+            continue;
+          }
+
+          const { error, count } = await query;
+
+          if (error) {
+            throw error;
+          }
+          console.log(`  ✓ ${table}${count !== null ? ` (${count}行削除)` : ''}`);
         }
-        // window_idをプライマリキーとするテーブル
-        else if (table === 'message_windows') {
-          query = supabase.from(table).delete().neq('window_id', '00000000-0000-0000-0000-000000000000');
-        }
-        else if (table === 'message_embeddings') {
-          query = supabase.from(table).delete().neq('window_id', '00000000-0000-0000-0000-000000000000');
-        }
-        // 文字列のプライマリキーを持つテーブル
-        else if (table === 'messages') {
-          query = supabase.from(table).delete().neq('message_id', '');
-        }
-        else if (table === 'channels') {
-          query = supabase.from(table).delete().neq('channel_id', '');
-        }
-        else if (table === 'threads') {
-          query = supabase.from(table).delete().neq('thread_id', '');
-        }
-        else if (table === 'sync_cursors') {
-          query = supabase.from(table).delete().neq('guild_id', '');
-        }
-        else {
-          console.warn(`  ⚠️  ${table}: スキップ（削除条件が未定義）`);
-          continue;
-        }
-        
-        const { error, count } = await query;
-        
-        if (error) {
-          throw error;
-        }
-        console.log(`  ✓ ${table}${count !== null ? ` (${count}行削除)` : ''}`);
       } catch (error) {
-        console.warn(`  ⚠️  ${table}: ${error instanceof Error ? error.message : String(error)}`);
+        // エラーの詳細を表示
+        if (error instanceof Error) {
+          console.warn(`  ⚠️  ${table}: ${error.message}`);
+        } else if (typeof error === 'object' && error !== null) {
+          console.warn(`  ⚠️  ${table}:`, JSON.stringify(error, null, 2));
+        } else {
+          console.warn(`  ⚠️  ${table}: ${String(error)}`);
+        }
       }
     }
 
@@ -94,10 +137,10 @@ async function resetDatabase() {
 
 // スクリプト実行
 resetDatabase()
-    .then(() => {
-        process.exit(0);
-    })
-    .catch((error) => {
-        console.error('予期しないエラー:', error);
-        process.exit(1);
-    });
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error('予期しないエラー:', error);
+    process.exit(1);
+  });
