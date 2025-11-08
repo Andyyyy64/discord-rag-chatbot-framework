@@ -108,47 +108,73 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
     const maxWaitTime = 30 * 60 * 1000; // 30分
     const pollInterval = 5000; // 5秒
     const startTime = Date.now();
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 3;
 
     while (Date.now() - startTime < maxWaitTime) {
-      // 対象ギルドのwindow_idを取得
-      const { data: windows, error: windowError } = await supabase
-        .from('message_windows')
-        .select('window_id')
-        .eq('guild_id', guildId);
+      try {
+        // ready状態のembed_queueを取得
+        const { data: queueData, error: queryError } = await supabase
+          .from('embed_queue')
+          .select('window_id')
+          .eq('status', 'ready');
 
-      if (windowError) {
-        logger.warn('Failed to fetch windows', windowError);
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
-        continue;
+        if (queryError) {
+          throw queryError;
+        }
+
+        if (!queueData || queueData.length === 0) {
+          logger.info('All embeddings completed');
+          return;
+        }
+
+        // windowsが対象ギルドのものかチェック
+        const windowIds = queueData.map((q) => q.window_id);
+
+        // バッチでチェック（500件ずつ）
+        let remainingCount = 0;
+        const batchSize = 500;
+
+        for (let i = 0; i < windowIds.length; i += batchSize) {
+          const batch = windowIds.slice(i, i + batchSize);
+          const { count, error: batchError } = await supabase
+            .from('message_windows')
+            .select('window_id', { count: 'exact', head: true })
+            .eq('guild_id', guildId)
+            .in('window_id', batch);
+
+          if (batchError) {
+            logger.warn(`Failed to check batch ${i / batchSize + 1}`, batchError);
+            continue;
+          }
+
+          remainingCount += count || 0;
+        }
+
+        if (remainingCount === 0) {
+          logger.info('All embeddings completed for guild');
+          return;
+        }
+
+        logger.info(`Waiting for embeddings: ${remainingCount} remaining`);
+        await updateProgress(jobId, 90, 100, `✨ 埋め込み処理中 (残り${remainingCount}件)...`);
+
+        // エラーカウンターをリセット
+        consecutiveErrors = 0;
+      } catch (error) {
+        consecutiveErrors++;
+        logger.warn(
+          `Failed to check embed queue status (${consecutiveErrors}/${maxConsecutiveErrors})`,
+          error
+        );
+
+        // 連続エラーが多すぎる場合は、完了と見なす
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          logger.warn('Too many consecutive errors, assuming embeddings are complete');
+          return;
+        }
       }
 
-      if (!windows || windows.length === 0) {
-        logger.info('No windows found for guild');
-        return;
-      }
-
-      const windowIds = windows.map((w) => w.window_id);
-
-      // ready状態のembed_queueを確認
-      const { count, error } = await supabase
-        .from('embed_queue')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'ready')
-        .in('window_id', windowIds);
-
-      if (error) {
-        logger.warn('Failed to check embed queue status', error);
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
-        continue;
-      }
-
-      if (count === 0) {
-        logger.info('All embeddings completed');
-        return;
-      }
-
-      logger.info(`Waiting for embeddings: ${count} remaining`);
-      await updateProgress(jobId, 90, 100, `✨ 埋め込み処理中 (残り${count}件)...`);
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
 
