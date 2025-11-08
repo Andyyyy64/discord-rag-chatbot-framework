@@ -4,35 +4,37 @@
 
 本システムのchat機能は、**pgvectorベースのセマンティック検索（意味検索）**を採用したRAG（Retrieval-Augmented Generation）システムです。
 
+> **Note**: Embedding生成の詳細は [embedding.md](./embedding.md) を参照してください。
+
 ## アーキテクチャ
 
 ```
 ユーザークエリ
     ↓
-[1] クエリのベクトル化（Gemini Embedding）
+[1] クエリのベクトル化
     ↓
 [2] ベクトル検索（pgvector RPC）
     ↓
-[3] 再ランク（オプション）
+[3] 候補の絞り込み（Top-15）
     ↓
-[4] 回答生成（Gemini Chat API）
+[4] 再ランク（オプション、Top-5）
+    ↓
+[5] プロンプト構築
+    ↓
+[6] 回答生成（Gemini Chat API）
 ```
 
 ## 実装の詳細
 
 ### 1. クエリのベクトル化
 
-**実装場所**: 
-- `src/domain/chat/chat-service.ts` (110行目)
-- `src/infrastructure/gemini/embedding-service.ts` (139-180行目)
+**実装場所**: `src/domain/chat/chat-service.ts` (110行目)
 
 **処理内容**:
 - Gemini Embedding APIを使用してクエリを3072次元ベクトルに変換
-- モデル: `gemini-embedding-001`
-- 出力次元: 3072次元（高精度）
-- リトライロジック: 最大10回、指数バックオフ + ジッター
+- 詳細は [embedding.md](./embedding.md) を参照
 
-### 2. ベクトル検索（pgvector with halfvec）
+### 2. ベクトル検索（pgvector）
 
 **実装場所**: `src/domain/chat/chat-service.ts` (118-125行目)
 
@@ -44,17 +46,11 @@
 **DB側実装**: `supabase/migrations/20251108090100_add_vector_search.sql`
 
 **使用技術**:
-- **データ型**: `halfvec(3072)` - 16ビット浮動小数点数、メモリ効率が良く高次元対応
-  - 通常の `vector` (32ビット) に比べてメモリ使用量が半分
-  - 3072次元 × 2バイト = 6,144バイト/ベクトル
-- **TypeScript側の型**: `string` (JSON文字列として保存、`number[]` として送受信)
+- **データ型**: `halfvec(3072)` - 詳細は [embedding.md](./embedding.md) を参照
 - **インデックス**: HNSW (Hierarchical Navigable Small World)
-  - `halfvec_cosine_ops`: halfvec 専用のコサイン距離演算子クラス
-  - `m = 16`: 各ノードの接続数（デフォルト）
-  - `ef_construction = 64`: 構築時の探索幅（デフォルト）
+  - `m = 16`: 各ノードの接続数
+  - `ef_construction = 64`: 構築時の探索幅
 - **演算子**: `<=>` (コサイン距離)
-  - ORDER BY では `<->` も `<=>` も同じ結果
-  - 本実装では統一性のため `<=>` を使用
 - **類似度計算**: `1 - (A <=> B)` でコサイン類似度（0〜1）に変換
 
 ### 3. 候補の絞り込み
@@ -103,32 +99,20 @@
 
 ## データフロー
 
-### テーブル構造
-
-```
-message_windows          message_embeddings
-├── window_id (PK)       ├── window_id (PK, FK)
-├── guild_id             ├── embedding (halfvec(3072))
-├── text                 └── updated_at
-├── message_ids
-├── start_at
-└── end_at
-```
-
-### 検索クエリの流れ
+### 検索フロー
 
 1. **ユーザーが `/chat 質問内容` を実行**
-   - 入力: "andyって誰？"
+   - 入力例: "andyって誰？"
 
 2. **クエリをベクトル化**
    - Gemini Embedding API → 3072次元ベクトル
 
 3. **pgvectorで類似検索**
-   - message_embeddings テーブルでコサイン距離検索
+   - `message_embeddings` テーブルでコサイン距離検索
    - ギルドIDでフィルタリング
    - 上位200件を取得
 
-4. **Top-15を選択**
+4. **候補の絞り込み**
    - 200件 → 類似度上位15件
 
 5. **再ランク（オプション）**
@@ -145,7 +129,7 @@ message_windows          message_embeddings
 |---------|------|
 | クエリベクトル化 | 300-500ms |
 | pgvector検索 | 100-300ms |
-| ウィンドウ取得 | 50-100ms |
+| 候補絞り込み | 50-100ms |
 | 再ランク | 200-500ms（有効時） |
 | LLM回答生成 | 1000-2000ms |
 | **合計** | **2-4秒** |
@@ -229,6 +213,7 @@ message_windows          message_embeddings
 **対処**:
 - マイグレーション適用: `npx supabase db push`
 - 同期実行: `/sync`（Discordコマンド）
+- Embedding生成の詳細は [embedding.md](./embedding.md) を参照
 
 ### Q2: 検索が遅い（1秒以上）
 
