@@ -4,6 +4,31 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 /**
+ * リトライ付きで関数を実行する
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  delayMs = 1000
+): Promise<T> {
+  let lastError: unknown;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (i < maxRetries - 1) {
+        console.log(`  ⏳ リトライ ${i + 1}/${maxRetries - 1}...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs * (i + 1)));
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
+/**
  * データベースの全テーブルをリセットするスクリプト
  * Supabaseクライアント経由でDELETE実行
  */
@@ -18,9 +43,21 @@ async function resetDatabase() {
     process.exit(1);
   }
 
-  // Supabaseクライアントを初期化
+  console.log(`  ℹ️  接続先: ${supabaseUrl}`);
+  console.log(`  ℹ️  使用中のキー: ${supabaseKey.substring(0, 20)}...`);
+
+  // Supabaseクライアントを初期化（タイムアウト設定を追加）
   const supabase = createClient(supabaseUrl, supabaseKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: (url, options = {}) => {
+        return fetch(url, {
+          ...options,
+          // タイムアウトを60秒に設定
+          signal: AbortSignal.timeout(60000),
+        });
+      },
+    },
   });
 
   try {
@@ -45,50 +82,88 @@ async function resetDatabase() {
         if (table === 'message_windows') {
           console.log(`  ➤ ${table}: バッチ削除中...`);
           let totalDeleted = 0;
-          const batchSize = 500;
+          const batchSize = 100; // バッチサイズを小さくして安定性を向上
+          let consecutiveErrors = 0;
+          const maxConsecutiveErrors = 5;
 
           // 小さいバッチで繰り返し削除
-          while (true) {
-            // 上位N件を取得
-            const { data: batch, error: fetchError } = await supabase
-              .from(table)
-              .select('window_id')
-              .limit(batchSize);
+          while (consecutiveErrors < maxConsecutiveErrors) {
+            try {
+              // 上位N件を取得（リトライ付き）
+              const { data: batch, error: fetchError } = await withRetry(
+                async () => {
+                  const result = await supabase
+                    .from(table)
+                    .select('window_id')
+                    .limit(batchSize);
+                  
+                  if (result.error) {
+                    throw new Error(`Fetch error: ${result.error.message}`);
+                  }
+                  
+                  return result;
+                },
+                3,
+                2000
+              );
 
-            if (fetchError) {
-              throw fetchError;
-            }
-
-            if (!batch || batch.length === 0) {
-              break;
-            }
-
-            // 少量のIDずつ削除（.in()の制限を考慮）
-            const chunkSize = 500;
-            for (let i = 0; i < batch.length; i += chunkSize) {
-              const chunk = batch.slice(i, i + chunkSize);
-              const ids = chunk.map(row => row.window_id);
-
-              const { error: deleteError, count } = await supabase
-                .from(table)
-                .delete()
-                .in('window_id', ids);
-
-              if (deleteError) {
-                console.warn(`\n  警告: バッチ削除に失敗: ${deleteError.message}`);
-              } else {
-                totalDeleted += count ?? chunk.length;
+              if (!batch || batch.length === 0) {
+                break;
               }
-            }
 
-            process.stdout.write(`\r  ➤ ${table}: ${totalDeleted}行削除中...`);
+              // 少量のIDずつ削除（.in()の制限を考慮）
+              const chunkSize = 100;
+              for (let i = 0; i < batch.length; i += chunkSize) {
+                const chunk = batch.slice(i, i + chunkSize);
+                const ids = chunk.map(row => row.window_id);
 
-            // バッチサイズより少ない場合は最後のバッチ
-            if (batch.length < batchSize) {
-              break;
+                const { error: deleteError, count } = await withRetry(
+                  async () => {
+                    const result = await supabase
+                      .from(table)
+                      .delete()
+                      .in('window_id', ids);
+                    
+                    if (result.error) {
+                      throw new Error(`Delete error: ${result.error.message}`);
+                    }
+                    
+                    return result;
+                  },
+                  3,
+                  1000
+                );
+
+                if (!deleteError) {
+                  totalDeleted += count ?? chunk.length;
+                  consecutiveErrors = 0; // エラーカウントをリセット
+                }
+              }
+
+              process.stdout.write(`\r  ➤ ${table}: ${totalDeleted}行削除中...`);
+
+              // バッチサイズより少ない場合は最後のバッチ
+              if (batch.length < batchSize) {
+                break;
+              }
+            } catch (error) {
+              consecutiveErrors++;
+              console.log(`\n  ⚠️  エラーが発生しました (${consecutiveErrors}/${maxConsecutiveErrors})`);
+              
+              if (error instanceof Error) {
+                console.log(`  ℹ️  エラー詳細: ${error.message}`);
+              }
+              
+              if (consecutiveErrors >= maxConsecutiveErrors) {
+                console.log(`  ⚠️  ${table}: 連続エラーが多すぎるためスキップします`);
+                break;
+              }
+              
+              // 次のバッチまで少し待機
+              await new Promise(resolve => setTimeout(resolve, 3000));
             }
           }
-          console.log(`\r  ✓ ${table} (${totalDeleted}行削除)          `);
+          console.log(`\n  ✓ ${table} (${totalDeleted}行削除)          `);
         } else {
           // 通常のテーブルは一括削除
           let query;
@@ -117,13 +192,26 @@ async function resetDatabase() {
         }
       } catch (error) {
         // エラーの詳細を表示
+        console.log(`  ⚠️  ${table}テーブルの削除中にエラーが発生しました`);
+        
         if (error instanceof Error) {
-          console.warn(`  ⚠️  ${table}: ${error.message}`);
+          console.log(`     エラー: ${error.message}`);
+          if (error.stack) {
+            console.log(`     スタックトレース: ${error.stack.split('\n').slice(0, 3).join('\n')}`);
+          }
+          
+          // fetch failedエラーの場合、追加情報を表示
+          if (error.message.includes('fetch failed')) {
+            console.log(`     💡 ヒント: ネットワーク接続を確認してください`);
+            console.log(`     💡 Supabase URLが正しいか確認してください: ${supabaseUrl}`);
+          }
         } else if (typeof error === 'object' && error !== null) {
-          console.warn(`  ⚠️  ${table}:`, JSON.stringify(error, null, 2));
+          console.log(`     詳細:`, JSON.stringify(error, null, 2));
         } else {
-          console.warn(`  ⚠️  ${table}: ${String(error)}`);
+          console.log(`     エラー: ${String(error)}`);
         }
+        
+        console.log(`  ℹ️  ${table}テーブルはスキップして続行します\n`);
       }
     }
 
