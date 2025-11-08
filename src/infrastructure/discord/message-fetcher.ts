@@ -173,10 +173,10 @@ export function createMessageFetcher(client: Client) {
       return [];
     }
 
-    // 並列数制限（Discord API レート制限を考慮）
-    const concurrency = Number(process.env.DISCORD_FETCH_CONCURRENCY ?? 10);
+    // 並列数制限
+    const concurrency = Number(process.env.DISCORD_FETCH_CONCURRENCY ?? 15);
     const channelLimit = pLimit(concurrency);
-    // スレッド用の別の limit（デッドロック回避）
+    // スレッド用の別の limit（デッドロック回避用）
     const threadLimit = pLimit(concurrency);
 
     // チャンネルを取得

@@ -35,7 +35,7 @@ export function createEmbedWorker(_client: Client, config: EmbedWorkerConfig = {
   const tokenCounter = createDefaultTokenCounter();
   const pollIntervalMs = config.pollIntervalMs ?? 500;
   const batchSize = config.batchSize ?? 500;
-  const concurrency = config.concurrency ?? 50;
+  const concurrency = config.concurrency ?? 30;
   const maxAttempts = config.maxAttempts ?? 5;
 
   /**
