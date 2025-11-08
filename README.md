@@ -35,7 +35,7 @@ supabase/migrations/00000000000000_init.sql
 npx supabase login
 
 # リモートプロジェクトとリンク
-npx supabase link --project-ref your-project-ref
+npx supabase link
 
 # マイグレーションを適用
 npx supabase db push
