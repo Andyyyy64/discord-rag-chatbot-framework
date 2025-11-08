@@ -239,6 +239,16 @@ export function createEmbedWorker(_client: Client, config: EmbedWorkerConfig = {
     logger.info(
       `[Embed Worker] ✓ Batch complete: ${succeeded}/${batch.length} succeeded, ${failed} failed`
     );
+
+    // すべてのembed_queueが処理完了したかチェック
+    const { count: remainingCount } = await supabase
+      .from('embed_queue')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'ready');
+
+    if (remainingCount === 0) {
+      logger.info('[Embed Worker] ✅ 全ての埋め込み処理が完了しました！');
+    }
   };
 
   /**

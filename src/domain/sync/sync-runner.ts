@@ -90,7 +90,7 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
       .update({
         status: success ? 'completed' : 'failed',
         progress: success
-          ? { processed: 100, total: 100, message: '同期完了' }
+          ? { processed: 100, total: 100, message: '✅ 同期完了しました！' }
           : { processed: 0, total: 0, message: errorMsg ?? 'エラーが発生しました' },
         updated_at: new Date().toISOString(),
       })
@@ -99,6 +99,60 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
     if (error) {
       logger.error('Failed to complete job', error);
     }
+  };
+
+  /**
+   * 埋め込み処理の完了を待機
+   */
+  const waitForEmbeddingComplete = async (guildId: string, jobId: string): Promise<void> => {
+    const maxWaitTime = 30 * 60 * 1000; // 30分
+    const pollInterval = 5000; // 5秒
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWaitTime) {
+      // 対象ギルドのwindow_idを取得
+      const { data: windows, error: windowError } = await supabase
+        .from('message_windows')
+        .select('window_id')
+        .eq('guild_id', guildId);
+
+      if (windowError) {
+        logger.warn('Failed to fetch windows', windowError);
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        continue;
+      }
+
+      if (!windows || windows.length === 0) {
+        logger.info('No windows found for guild');
+        return;
+      }
+
+      const windowIds = windows.map((w) => w.window_id);
+
+      // ready状態のembed_queueを確認
+      const { count, error } = await supabase
+        .from('embed_queue')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'ready')
+        .in('window_id', windowIds);
+
+      if (error) {
+        logger.warn('Failed to check embed queue status', error);
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        continue;
+      }
+
+      if (count === 0) {
+        logger.info('All embeddings completed');
+        return;
+      }
+
+      logger.info(`Waiting for embeddings: ${count} remaining`);
+      await updateProgress(jobId, 90, 100, `✨ 埋め込み処理中 (残り${count}件)...`);
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    logger.warn('Embedding wait timeout, continuing anyway...');
   };
 
   /**
@@ -305,8 +359,8 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
       const messages = await fetcher.fetchMessagesFromGuild(job.guild_id, {
         since,
         onProgress: async (completed, total, phase) => {
-          // フェーズ1: メッセージ取得（全体の0-70%）
-          const percentage = Math.floor((completed / total) * 70);
+          // フェーズ1: メッセージ取得（全体の0-30%）
+          const percentage = Math.floor((completed / total) * 30);
           await updateProgress(
             job.id,
             percentage,
@@ -323,22 +377,29 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
         return;
       }
 
-      // フェーズ2: メッセージ保存（70-80%）
-      await updateProgress(job.id, 70, 100, `💾 ${messages.length}件のメッセージを保存中...`);
+      // フェーズ2: メッセージ保存（30-50%）
+      await updateProgress(job.id, 30, 100, `💾 ${messages.length}件のメッセージを保存中...`);
       logger.info(`Saving ${messages.length} messages to database...`);
 
       await saveMessages(job.guild_id, messages);
       logger.info(`✓ Saved ${messages.length} messages`);
 
-      // フェーズ3: チャンク処理（80-95%）
-      await updateProgress(job.id, 80, 100, `🔨 チャンク処理中...`);
+      // フェーズ3: チャンク処理（50-90%）
+      await updateProgress(job.id, 50, 100, `🔨 チャンク処理中...`);
       logger.info(`Starting chunking for ${messages.length} messages...`);
 
       await createWindows(job.guild_id, messages);
       logger.info(`✓ Chunking complete`);
 
-      // フェーズ4: カーソル更新（95-100%）
-      await updateProgress(job.id, 95, 100, '🔄 カーソル更新中...');
+      // フェーズ4: 埋め込み処理を待機（90-99%）
+      await updateProgress(job.id, 90, 100, '✨ 埋め込み処理中...');
+      logger.info('Waiting for embedding to complete...');
+
+      await waitForEmbeddingComplete(job.guild_id, job.id);
+      logger.info(`✓ Embedding complete`);
+
+      // フェーズ5: カーソル更新（99-100%）
+      await updateProgress(job.id, 99, 100, '🔄 カーソル更新中...');
 
       const { error: cursorError } = await supabase.from('sync_cursors').upsert({
         guild_id: job.guild_id,

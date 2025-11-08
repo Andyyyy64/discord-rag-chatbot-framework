@@ -27,6 +27,9 @@ export function createSyncController(service = createSyncService()): CommandCont
           `進捗: ${status.processed}/${status.total} | 状態: ${status.status}`
       );
 
+      // 状態表示のアニメーション用カウンター
+      let animationCounter = 0;
+
       // 進捗を定期的にポーリングして更新
       const pollInterval = setInterval(async () => {
         try {
@@ -41,11 +44,19 @@ export function createSyncController(service = createSyncService()): CommandCont
           const progressBar = createProgressBar(currentStatus.processed, currentStatus.total);
           const statusEmoji = getStatusEmoji(currentStatus.status);
 
+          // 状態表示のアニメーション
+          let statusText: string = currentStatus.status;
+          if (currentStatus.status === 'running') {
+            const dots = '.'.repeat(animationCounter % 4);
+            statusText = `running${dots}`;
+            animationCounter++;
+          }
+
           await interaction.editReply(
             `${statusEmoji} 同期ジョブ (ID: ${status.jobId})\n` +
               `進捗: ${currentStatus.processed}/${currentStatus.total}\n` +
               `${progressBar}\n` +
-              `状態: ${currentStatus.status}` +
+              `状態: ${statusText}` +
               (currentStatus.message ? `\n${currentStatus.message}` : '')
           );
 
