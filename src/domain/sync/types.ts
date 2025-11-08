@@ -6,6 +6,12 @@ export interface SyncCommandInput {
   requestedBy: string;
 }
 
+export interface ChannelSyncCommandInput {
+  guildId: string;
+  channelId: string;
+  requestedBy: string;
+}
+
 export interface SyncJobStatus {
   jobId: string;
   processed: number;

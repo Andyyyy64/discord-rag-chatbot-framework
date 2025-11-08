@@ -1,6 +1,9 @@
-import type { Client } from 'discord.js';
+import type { Client, TextChannel } from 'discord.js';
 
-import { createMessageFetcher } from '../../infrastructure/discord/message-fetcher';
+import {
+  createMessageFetcher,
+  type FetchedMessage,
+} from '../../infrastructure/discord/message-fetcher';
 import { logger } from '../../infrastructure/logging/logger';
 import { getSupabaseClient } from '../../infrastructure/supabase/client';
 import type { TypedSyncOperation } from '../../infrastructure/supabase/database-extensions.types';
@@ -370,7 +373,7 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
    * 1つのジョブを処理
    */
   const processJob = async (job: SyncOperationRow): Promise<void> => {
-    logger.info(`Processing sync job: ${job.id} (mode: ${job.mode})`);
+    logger.info(`Processing sync job: ${job.id} (scope: ${job.scope}, mode: ${job.mode})`);
 
     try {
       // 進捗を初期化
@@ -378,25 +381,52 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
 
       // メッセージを取得（進捗コールバック付き）
       const since = job.since ? new Date(job.since) : undefined;
-      logger.info(
-        `Starting message fetch from guild ${job.guild_id} (since: ${since?.toISOString() ?? 'beginning'})`
-      );
+      
+      let messages: FetchedMessage[] = [];
 
-      const messages = await fetcher.fetchMessagesFromGuild(job.guild_id, {
-        since,
-        onProgress: async (completed, total, phase) => {
-          // フェーズ1: メッセージ取得（全体の0-30%）
-          const percentage = Math.floor((completed / total) * 30);
-          await updateProgress(
-            job.id,
-            percentage,
-            100,
-            `📥 ${phase}: ${completed}/${total}チャンネル`
-          );
-        },
-      });
+      // スコープに応じたメッセージ取得
+      if (job.scope === 'channel' && job.target_ids && job.target_ids.length > 0) {
+        // チャンネル同期
+        const channelId = job.target_ids[0];
+        logger.info(
+          `Starting message fetch from channel ${channelId} (since: ${since?.toISOString() ?? 'beginning'})`
+        );
 
-      logger.info(`✓ Fetched ${messages.length} messages from guild ${job.guild_id}`);
+        const guild = client.guilds.cache.get(job.guild_id);
+        if (!guild) {
+          throw new Error(`Guild ${job.guild_id} not found`);
+        }
+
+        const channel = await guild.channels.fetch(channelId);
+        if (!channel || !channel.isTextBased()) {
+          throw new Error(`Channel ${channelId} not found or is not a text channel`);
+        }
+
+        await updateProgress(job.id, 10, 100, `📥 チャンネルからメッセージを取得中...`);
+        messages = await fetcher.fetchMessagesFromChannel(channel as TextChannel, { since });
+        logger.info(`✓ Fetched ${messages.length} messages from channel ${channelId}`);
+      } else {
+        // ギルド全体の同期
+        logger.info(
+          `Starting message fetch from guild ${job.guild_id} (since: ${since?.toISOString() ?? 'beginning'})`
+        );
+
+        messages = await fetcher.fetchMessagesFromGuild(job.guild_id, {
+          since,
+          onProgress: async (completed, total, phase) => {
+            // フェーズ1: メッセージ取得（全体の0-30%）
+            const percentage = Math.floor((completed / total) * 30);
+            await updateProgress(
+              job.id,
+              percentage,
+              100,
+              `📥 ${phase}: ${completed}/${total}チャンネル`
+            );
+          },
+        });
+
+        logger.info(`✓ Fetched ${messages.length} messages from guild ${job.guild_id}`);
+      }
 
       if (messages.length === 0) {
         await completeJob(job.id, true);

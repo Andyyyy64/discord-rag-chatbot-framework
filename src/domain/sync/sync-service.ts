@@ -4,7 +4,7 @@ import type { TypedSyncOperation } from '../../infrastructure/supabase/database-
 import type { Database } from '../../infrastructure/supabase/database.types';
 import { createBaseError } from '../../shared/errors/base-error';
 
-import type { SyncCommandInput, SyncJobStatus, SyncMode } from './types';
+import type { ChannelSyncCommandInput, SyncCommandInput, SyncJobStatus, SyncMode } from './types';
 
 // データベースから返される行の型定義
 type SyncOperationRow = TypedSyncOperation;
@@ -116,5 +116,40 @@ export function createSyncService() {
     return mapStatus(data);
   };
 
-  return { requestSync, getJobStatus };
+  /**
+   * チャンネルの同期ジョブをリクエストする
+   * 特定のチャンネルのみを同期する
+   */
+  const requestChannelSync = async (input: ChannelSyncCommandInput): Promise<SyncJobStatus> => {
+    const cursor = await fetchCursor(input.guildId);
+    const mode: SyncMode = cursor ? 'delta' : 'full';
+
+    const payload: Database['public']['Tables']['sync_operations']['Insert'] = {
+      guild_id: input.guildId,
+      scope: 'channel',
+      mode,
+      target_ids: [input.channelId],
+      since: cursor?.last_synced_at ?? null,
+      requested_by: input.requestedBy,
+      status: 'queued',
+      progress: { processed: 0, total: 0 },
+    };
+
+    const { data, error } = await supabase
+      .from('sync_operations')
+      .insert(payload)
+      .select('*')
+      .single<SyncOperationRow>();
+
+    if (error || !data) {
+      logger.error('Failed to enqueue channel sync job', error);
+      throw createBaseError('チャンネル同期ジョブの登録に失敗しました', 'SYNC_ENQUEUE_FAILED', { error });
+    }
+
+    await upsertCursor(input.guildId);
+
+    return mapStatus(data);
+  };
+
+  return { requestSync, requestChannelSync, getJobStatus };
 }

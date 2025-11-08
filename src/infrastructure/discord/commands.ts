@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from 'discord.js';
 
 export const commandBuilders = [
   new SlashCommandBuilder().setName('sync').setDescription('Guild 全体の同期ジョブを実行します'),
+  new SlashCommandBuilder().setName('sync-channel').setDescription('このチャンネルのみの同期ジョブを実行します'),
   new SlashCommandBuilder()
     .setName('chat')
     .setDescription('Discord RAG に質問します')
