@@ -96,224 +96,74 @@ export function createChatService(rerankService = createRerankService()) {
   };
 
   /**
-   * ハイブリッド検索：テキスト検索 → Vector
+   * ベクトル検索（pgvector RPC）を主軸に候補を取得する
    */
   const fetchCandidateWindowsHybrid = async (
     input: ChatCommandInput
   ): Promise<MessageWindowRecord[]> => {
     const searchStart = Date.now();
-    logger.info(`[Chat] 🔍 Starting hybrid search for query: "${input.query}"`);
+    logger.info(`[Chat] 🔍 Starting vector search for query: "${input.query}"`);
     
     try {
-      // ステップ 1: テキスト検索で粗検索（ILIKE による部分一致）
-      // ギルド全体から検索（チャンネル制限なし）
-      const keywords = input.query.split(/\s+/).filter((k) => k.length > 0);
-      logger.info(`[Chat] 📝 Keywords extracted: ${keywords.join(', ')}`);
-      
-      let query = supabase
-        .from('message_windows')
-        .select('window_id,text,message_ids,start_at,end_at,channel_id,guild_id')
-        .eq('guild_id', input.guildId);
-
-      // 各キーワードで OR 検索
-      if (keywords.length > 0) {
-        const orConditions = keywords.map((keyword) => `text.ilike.%${keyword}%`).join(',');
-        query = query.or(orConditions);
-      }
-
-      const textSearchStart = Date.now();
-      const { data: roughResults, error: roughError } = await query
-        .order('start_at', { ascending: false })
-        .limit(100);
-      
-      logger.info(`[Chat] 📄 Text search complete (${Date.now() - textSearchStart}ms): ${roughResults?.length ?? 0} candidates found`);
-
-      if (roughError) {
-        logger.error('[Chat] ❌ Text search error:', roughError);
-      }
-
-      if (roughError || !roughResults || roughResults.length === 0) {
-        logger.warn('[Chat] ⚠️ Text search returned no results, falling back to vector-only search');
-        return await fallbackVectorSearch(input);
-      }
-
-      // ステップ 2: クエリの embedding を生成
+      // ステップ 1: クエリの embedding を生成
       const embeddingStart = Date.now();
-      logger.info('[Chat] 🧬 Generating query embedding...');
       const queryEmbedding = await embedQuery(input.query, 3072);
-      logger.info(`[Chat] ✅ Query embedding generated (${Date.now() - embeddingStart}ms, ${queryEmbedding.length} dimensions)`);
+      logger.info(
+        `[Chat] ✅ Query embedding generated (${Date.now() - embeddingStart}ms, ${queryEmbedding.length} dimensions)`
+      );
 
-      // ステップ 3: Vector 検索で精密化（embedding がある window のみ）
-      const windowIds = roughResults.map((r) => r.window_id);
-      logger.info(`[Chat] 🔎 Fetching embeddings for ${windowIds.length} candidates...`);
+      // ステップ 2: pgvector の RPC でギルド内 Top-K を取得
+      const vectorStart = Date.now();
+      const VECTOR_LIMIT = 200; // 後段でさらにTop-Nに絞る
+      const { data: matched, error: matchError } = await supabase.rpc(
+        'match_windows_in_guild',
+        {
+          query_embedding: queryEmbedding,
+          p_guild_id: input.guildId,
+          p_limit: VECTOR_LIMIT,
+        }
+      );
 
-      const vectorSearchStart = Date.now();
-      const { data: vectorResults, error: vectorError } = await supabase
-        .from('message_embeddings')
-        .select('window_id,embedding')
-        .in('window_id', windowIds);
-
-      logger.info(`[Chat] 📊 Vector fetch complete (${Date.now() - vectorSearchStart}ms): ${vectorResults?.length ?? 0} embeddings found`);
-
-      if (vectorError) {
-        logger.error('[Chat] ❌ Vector search error:', vectorError);
-      }
-
-      if (vectorError || !vectorResults || vectorResults.length === 0) {
-        logger.warn('[Chat] ⚠️ No embeddings found, using text search results only');
-        return roughResults.slice(0, 15);
-      }
-
-      // cosine 類似度を計算してソート
-      logger.info('[Chat] 🧮 Computing cosine similarity...');
-      const similarityStart = Date.now();
-      const scoredResults = vectorResults
-        .map((embeddingRow: { window_id: string; embedding: string }) => {
-          const embedding = JSON.parse(embeddingRow.embedding) as number[];
-          const windowInfo = roughResults.find((w) => w.window_id === embeddingRow.window_id);
-
-          if (!windowInfo) return null;
-
-          // cosine 類似度を計算
-          let dotProduct = 0;
-          let normA = 0;
-          let normB = 0;
-          for (let i = 0; i < queryEmbedding.length; i++) {
-            dotProduct += queryEmbedding[i] * embedding[i];
-            normA += queryEmbedding[i] * queryEmbedding[i];
-            normB += embedding[i] * embedding[i];
-          }
-          const similarity = dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-
-          return {
-            ...windowInfo,
-            similarity,
-          };
-        })
-        .filter((item): item is MessageWindowRecord & { similarity: number } => item !== null)
-        .sort((a, b) => b.similarity - a.similarity);
-
-      logger.info(`[Chat] 🎯 Similarity computed (${Date.now() - similarityStart}ms)`);
-      
-      // トップ5の類似度スコアを表示
-      const top5 = scoredResults.slice(0, 5);
-      logger.info(`[Chat] 🏆 Top 5 results:`);
-      top5.forEach((result, index) => {
-        const preview = result.text?.slice(0, 50).replace(/\n/g, ' ') ?? '(no text)';
-        logger.info(`[Chat]   #${index + 1}: similarity=${result.similarity.toFixed(4)} | "${preview}..."`);
-      });
-
-      logger.info(`[Chat] ✨ Hybrid search complete (${Date.now() - searchStart}ms total), returning top 15`);
-      return scoredResults.slice(0, 15);
-    } catch (error) {
-      logger.error('[Chat] Hybrid search failed', error);
-      return await fallbackRecentWindows(input);
+      if (matchError) {
+        logger.error('[Chat] ❌ Vector RPC error:', matchError);
+        return [];
     }
-  };
 
-  /**
-   * フォールバック：Vector 検索のみでギルド全体から検索
-   */
-  const fallbackVectorSearch = async (input: ChatCommandInput): Promise<MessageWindowRecord[]> => {
-    try {
-      logger.info('[Chat] 🔄 Using vector-only search across entire guild');
-      
-      const embeddingStart = Date.now();
-      const queryEmbedding = await embedQuery(input.query, 3072);
-      logger.info(`[Chat] ✅ Query embedding generated (${Date.now() - embeddingStart}ms)`);
+      logger.info(
+        `[Chat] 📊 Vector RPC complete (${Date.now() - vectorStart}ms): ${matched?.length ?? 0} candidates`
+      );
 
-      // ギルド全体の embedding を取得（最大1000件）
-      logger.info('[Chat] 📥 Fetching all embeddings (limit 1000)...');
-      const fetchStart = Date.now();
-      const { data: allEmbeddings, error: embeddingError } = await supabase
-        .from('message_embeddings')
-        .select('window_id,embedding')
-        .limit(1000);
-
-      logger.info(`[Chat] 📊 Fetched ${allEmbeddings?.length ?? 0} embeddings (${Date.now() - fetchStart}ms)`);
-
-      if (embeddingError) {
-        logger.error('[Chat] ❌ Embedding fetch error:', embeddingError);
+      if (!matched || matched.length === 0) {
+        logger.warn('[Chat] ⚠️ No vector matches');
+        return [];
       }
 
-      if (embeddingError || !allEmbeddings || allEmbeddings.length === 0) {
-        logger.warn('[Chat] ⚠️ Vector search failed, falling back to recent windows');
-        return await fallbackRecentWindows(input);
-      }
-
-      // cosine 類似度を計算
-      logger.info('[Chat] 🧮 Computing cosine similarity for all embeddings...');
-      const similarityStart = Date.now();
-      const scoredEmbeddings = allEmbeddings
-        .map((row: { window_id: string; embedding: string }) => {
-          const embedding = JSON.parse(row.embedding) as number[];
-          let dotProduct = 0;
-          let normA = 0;
-          let normB = 0;
-          for (let i = 0; i < queryEmbedding.length; i++) {
-            dotProduct += queryEmbedding[i] * embedding[i];
-            normA += queryEmbedding[i] * queryEmbedding[i];
-            normB += embedding[i] * embedding[i];
-          }
-          const similarity = dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-          return { window_id: row.window_id, similarity };
-        })
-        .sort((a, b) => b.similarity - a.similarity)
-        .slice(0, 15);
-
-      logger.info(`[Chat] 🎯 Similarity computed (${Date.now() - similarityStart}ms)`);
-      logger.info(`[Chat] 🏆 Top 5 similarity scores: ${scoredEmbeddings.slice(0, 5).map((s, i) => `#${i + 1}=${s.similarity.toFixed(4)}`).join(', ')}`);
-
-      // window 情報を取得
-      const windowIds = scoredEmbeddings.map((r) => r.window_id);
+      // ステップ 3: window 情報を取得し、類似度順に整列（上位15件）
+      const windowIds = matched.map((m: { window_id: string }) => m.window_id);
       const { data: windows, error: windowError } = await supabase
         .from('message_windows')
         .select('window_id,text,message_ids,start_at,end_at,channel_id,guild_id')
-        .eq('guild_id', input.guildId)
         .in('window_id', windowIds);
 
       if (windowError) {
         logger.error('[Chat] ❌ Window fetch error:', windowError);
-        return await fallbackRecentWindows(input);
+        return [];
       }
 
-      if (!windows) {
-        logger.warn('[Chat] ⚠️ No windows found');
-        return await fallbackRecentWindows(input);
-      }
-
-      // similarity スコア順にソート
-      const results = scoredEmbeddings
-        .map((scored) => windows.find((w) => w.window_id === scored.window_id))
-        .filter((w): w is MessageWindowRecord => w !== null && w !== undefined);
+      const byId = new Map(windows?.map((w) => [w.window_id, w]) ?? []);
+      const ordered = matched
+        .map((m: { window_id: string; similarity: number }) => byId.get(m.window_id))
+        .filter((w): w is MessageWindowRecord => Boolean(w))
+        .slice(0, 15);
       
-      logger.info(`[Chat] ✨ Vector-only search complete, returning ${results.length} results`);
-      return results;
+      logger.info(
+        `[Chat] ✨ Vector search complete (${Date.now() - searchStart}ms total), returning top ${ordered.length}`
+      );
+      return ordered;
     } catch (error) {
-      logger.error('[Chat] ❌ Vector-only search failed', error);
-      return await fallbackRecentWindows(input);
+      logger.error('[Chat] Vector search failed', error);
+      return [];
     }
-  };
-
-  /**
-   * フォールバック：最新の windows を返す（実行チャンネルのみ）
-   */
-  const fallbackRecentWindows = async (input: ChatCommandInput): Promise<MessageWindowRecord[]> => {
-    const { data, error } = await supabase
-      .from('message_windows')
-      .select('window_id,text,message_ids,start_at,end_at,channel_id,guild_id')
-      .eq('guild_id', input.guildId)
-      .eq('channel_id', input.channelId)
-      .order('end_at', { ascending: false })
-      .limit(12);
-
-    if (error) {
-      throw createBaseError('メッセージコンテキストの取得に失敗しました', 'WINDOW_FETCH_FAILED', {
-        error,
-      });
-    }
-
-    return data ?? [];
   };
 
   /**

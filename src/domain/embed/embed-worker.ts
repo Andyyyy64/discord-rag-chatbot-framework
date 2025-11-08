@@ -128,7 +128,6 @@ export function createEmbedWorker(_client: Client, config: EmbedWorkerConfig = {
       const text = await fetchWindowText(queueItem.window_id);
 
       if (!text) {
-        logger.warn(`[Embed Worker] No text for window ${queueItem.window_id}, marking as failed`);
         await supabase
           .from('embed_queue')
           .update({

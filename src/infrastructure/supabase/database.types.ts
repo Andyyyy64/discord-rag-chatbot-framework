@@ -349,7 +349,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      match_windows_in_guild: {
+        Args: {
+          query_embedding: number[]
+          p_guild_id: string
+          p_limit?: number
+        }
+        Returns: {
+          window_id: string
+          similarity: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
