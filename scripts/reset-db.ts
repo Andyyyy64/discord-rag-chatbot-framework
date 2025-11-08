@@ -1,45 +1,47 @@
-import { getSupabaseClient } from '../src/infrastructure/supabase/client';
+import postgres from 'postgres';
+
+import { loadEnv } from '../src/config/env';
 
 /**
  * データベースの全テーブルをリセットするスクリプト
- * 全てのデータを削除して初期状態に戻す
+ * TRUNCATEコマンドで高速に全データを削除
  */
 async function resetDatabase() {
-    console.log('🔄 データベースリセットを開始します...');
+  console.log('🔄 データベースリセットを開始します...');
 
-    const supabase = getSupabaseClient();
+  const env = loadEnv();
+  
+  // DATABASE_URLを使用してPostgresに接続
+  const sql = postgres(env.DATABASE_URL, {
+    ssl: 'require',
+  });
 
-    try {
-        // 各テーブルを削除（外部キー制約を考慮した順序）
-        // 各テーブルの主キーに応じて削除条件を設定
-        const tables = [
-            { name: 'embed_queue', key: 'id' },
-            { name: 'message_embeddings', key: 'window_id' },
-            { name: 'message_windows', key: 'window_id' },
-            { name: 'messages', key: 'message_id' },
-            { name: 'sync_cursors', key: 'guild_id' },
-            { name: 'sync_operations', key: 'id' },
-        ];
+  try {
+    // TRUNCATEで全テーブルを一括削除（外部キー制約も自動的に処理）
+    const tables = [
+      'embed_queue',
+      'message_embeddings',
+      'message_windows',
+      'messages',
+      'sync_cursors',
+      'sync_operations',
+    ];
 
-        for (const table of tables) {
-            console.log(`  ➤ ${table.name} テーブルをクリア中...`);
+    console.log('  ➤ 全テーブルをTRUNCATEで削除中...');
 
-            // NULL以外の全レコードを削除（実質的に全行削除）
-            const { error } = await supabase.from(table.name).delete().not(table.key, 'is', null);
+    // CASCADE を使って外部キー制約も含めて削除
+    const tableList = tables.join(', ');
+    await sql.unsafe(`TRUNCATE TABLE ${tableList} CASCADE`);
 
-            if (error) {
-                console.error(`    ❌ ${table.name} のクリアに失敗:`, error.message);
-                throw error;
-            }
+    console.log('  ✅ 全テーブルをクリアしました');
+    console.log('\n✨ データベースのリセットが完了しました！');
 
-            console.log(`    ✅ ${table.name} をクリアしました`);
-        }
-
-        console.log('\n✨ データベースのリセットが完了しました！');
-    } catch (error) {
-        console.error('\n❌ データベースのリセット中にエラーが発生しました:', error);
-        process.exit(1);
-    }
+    await sql.end();
+  } catch (error) {
+    console.error('\n❌ データベースのリセット中にエラーが発生しました:', error);
+    await sql.end();
+    process.exit(1);
+  }
 }
 
 // スクリプト実行

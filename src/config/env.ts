@@ -7,6 +7,7 @@ const envSchema = z.object({
   DISCORD_PUBLIC_KEY: z.string().min(1),
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
+  DATABASE_URL: z.string().url(),
   GEMINI_API_KEY: z.string().min(1),
   CHAT_MODEL: z.string().default('gemini-2.5-flash-lite'),
   EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),

@@ -60,18 +60,18 @@ export const messages = pgTable('messages', {
 export const messageWindows = pgTable(
   'message_windows',
   {
-    windowId: uuid('window_id').primaryKey().defaultRandom(),
-    guildId: text('guild_id').notNull(),
-    categoryId: text('category_id'),
-    channelId: text('channel_id').notNull(),
-    threadId: text('thread_id'),
-    date: date('date').notNull(),
-    windowSeq: integer('window_seq').notNull(),
-    messageIds: text('message_ids').array().notNull(),
-    startAt: timestamp('start_at', { withTimezone: true }).notNull(),
-    endAt: timestamp('end_at', { withTimezone: true }).notNull(),
-    tokenEst: integer('token_est'),
-    textBody: text('text'),
+  windowId: uuid('window_id').primaryKey().defaultRandom(),
+  guildId: text('guild_id').notNull(),
+  categoryId: text('category_id'),
+  channelId: text('channel_id').notNull(),
+  threadId: text('thread_id'),
+  date: date('date').notNull(),
+  windowSeq: integer('window_seq').notNull(),
+  messageIds: text('message_ids').array().notNull(),
+  startAt: timestamp('start_at', { withTimezone: true }).notNull(),
+  endAt: timestamp('end_at', { withTimezone: true }).notNull(),
+  tokenEst: integer('token_est'),
+  textBody: text('text'),
   },
   (table) => ({
     uniqueChannelDateSeq: unique('unique_channel_date_seq').on(
@@ -127,14 +127,14 @@ export const syncChunks = pgTable('sync_chunks', {
 export const embedQueue = pgTable(
   'embed_queue',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+  id: uuid('id').primaryKey().defaultRandom(),
     windowId: uuid('window_id')
       .references(() => messageWindows.windowId, { onDelete: 'cascade' })
       .notNull(),
-    priority: integer('priority').notNull().default(0),
-    status: text('status').notNull().default('ready'),
-    attempts: integer('attempts').notNull().default(0),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  priority: integer('priority').notNull().default(0),
+  status: text('status').notNull().default('ready'),
+  attempts: integer('attempts').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
   (table) => ({
     uniqueWindowId: unique('unique_window_id').on(table.windowId),

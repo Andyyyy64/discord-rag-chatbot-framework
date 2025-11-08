@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 import { loadEnv } from '../../config/env';
 
-// データベーステーブルの型定義 todo これ schema.tsから取得　これはやべーよ？
+// データベーステーブルの型定義todoこれschema.tsから取得これはやべーよ？
 export type Database = {
   public: {
     Tables: {
