@@ -1,6 +1,6 @@
 # Discord RAG Chatbot Framework
 
-Discord上のメッセージをRAGで検索可能にするフレームワーク。ベクトル検索とハイブリッド検索に対応。
+Discord上の全メッセージをembeddingしてchatできるdiscordbotの構築フレームワーク
 
 ## 必要なもの
 
@@ -10,7 +10,11 @@ Discord上のメッセージをRAGで検索可能にするフレームワーク�
 - Google Gemini API キー
 - Discord Bot トークン
 
-## セットアップ
+supabaseやgcpは **推奨** なだけであって自分で勝手に別のインフラストラクチャに変えていいです。なんならsupabaseなんて使う必要ないよね
+
+discordbotである以上botのtokenは必須です。あと僕はgeminiのembeddingモデルが一番使い勝手がよいと感じたのでgemini-embedding-001を選択しました。正直これもなんでもいいと思う
+
+## セットアップ(推奨フロー)
 
 ### 1. Supabaseプロジェクトの作成
 
@@ -70,7 +74,7 @@ DATABASE_URL=postgresql://postgres:[password]@[host]:5432/postgres
 # Gemini API設定
 GEMINI_API_KEY=your_gemini_api_key
 CHAT_MODEL=gemini-2.0-flash-exp
-EMBEDDING_MODEL=text-embedding-004
+EMBEDDING_MODEL=gemini-embedding-
 EMBEDDING_DIM=768
 
 # Rerank設定（オプション）
@@ -121,28 +125,6 @@ npm run db:reset     # 全テーブルのデータを削除
 npm run deploy       # Dockerビルド & デプロイ
 ```
 
-## プロジェクト構造
-
-```
-discord-rag-chatbot-framework/
-├── src/
-│   ├── config/              # 設定ファイル
-│   ├── domain/              # ドメインロジック
-│   │   ├── chat/            # チャット機能
-│   │   ├── embed/           # Embedding生成
-│   │   ├── sync/            # Discord同期
-│   │   └── common/          # 共通ロジック
-│   ├── infrastructure/      # インフラ層
-│   │   ├── discord/         # Discord API
-│   │   ├── supabase/        # Supabase Client & 型定義
-│   │   └── logging/         # ログ
-│   └── index.ts             # エントリーポイント
-├── supabase/
-│   └── migrations/          # データベースマイグレーション
-├── scripts/                 # ユーティリティスクリプト
-└── docs/                    # ドキュメント
-```
-
 ## 型定義の管理
 
 ### 自動生成される型
@@ -159,16 +141,6 @@ npm run db:types
 
 アプリケーション固有の型は `database-extensions.types.ts` で定義
 
-## データベーススキーマ
-
-主要テーブル：
-
-- `messages` - Discordメッセージ
-- `message_windows` - チャンク化されたメッセージウィンドウ
-- `message_embeddings` - ベクトルembedding (VECTOR(3072))
-- `sync_operations` - 同期ジョブ管理
-- `embed_queue` - embedding生成キュー
-
 ## Discord Bot コマンド
 
 ### チャット
@@ -183,17 +155,7 @@ npm run db:types
 
 ```
 /sync             # ギルド全体を同期
-/sync-channel     # 特定チャンネルを同期
-/sync-thread      # 特定スレッドを同期
 ```
-
-## 検索アルゴリズム
-
-ハイブリッド検索を実装：
-
-1. **テキスト検索** (ILIKE) で粗検索
-2. **ベクトル検索** で精密検索
-3. **Rerank** (オプション) で再ランキング
 
 ## デプロイ
 
