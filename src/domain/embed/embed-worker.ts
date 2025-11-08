@@ -188,11 +188,7 @@ export function createEmbedWorker(_client: Client, config: EmbedWorkerConfig = {
           updateError
         );
       }
-
-      logger.info(
-        `  → Window ${queueItem.window_id.substring(0, 8)}... embedded (${ensured.tokens} tokens)`
-      );
-
+      
       return true;
     } catch (error) {
       logger.error(`[Embed Worker] Error processing window ${queueItem.window_id}`, error);
