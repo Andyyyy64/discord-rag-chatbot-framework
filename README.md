@@ -155,6 +155,7 @@ npm run db:types
 
 ```
 /sync             # ギルド全体を同期
+/sync-channel     # 実行したチャンネルのみを同期
 ```
 
 ## デプロイ
