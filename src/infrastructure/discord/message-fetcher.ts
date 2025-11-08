@@ -18,6 +18,7 @@ export interface FetchedMessage {
 export interface FetchOptions {
   since?: Date;
   limit?: number;
+  onProgress?: (completed: number, total: number, phase: string) => void;
 }
 
 /**
@@ -319,16 +320,33 @@ export function createMessageFetcher(client: Client) {
     // すべてのタスクを並列実行（タイムアウト付き）
     logger.info(`Starting parallel fetch: ${tasks.length} tasks with concurrency ${concurrency}`);
 
+    let completedTasks = 0;
+    const totalTasks = tasks.length;
+
     const results = await Promise.all(
       tasks.map((task, index) =>
         channelLimit(async () => {
           try {
-            logger.info(`Starting task ${index + 1}/${tasks.length}`);
+            logger.info(`Starting task ${index + 1}/${totalTasks}`);
             const result = await task();
-            logger.info(`Completed task ${index + 1}/${tasks.length}: ${result.length} messages`);
+            completedTasks++;
+            logger.info(`Completed task ${index + 1}/${totalTasks}: ${result.length} messages`);
+            
+            // 進捗を報告
+            if (options.onProgress) {
+              options.onProgress(completedTasks, totalTasks, 'メッセージ取得中');
+            }
+            
             return result;
           } catch (error) {
-            logger.error(`Task ${index + 1}/${tasks.length} failed`, error);
+            completedTasks++;
+            logger.error(`Task ${index + 1}/${totalTasks} failed`, error);
+            
+            // エラーでも進捗を報告
+            if (options.onProgress) {
+              options.onProgress(completedTasks, totalTasks, 'メッセージ取得中');
+            }
+            
             return [];
           }
         })

@@ -94,5 +94,27 @@ export function createSyncService() {
     return mapStatus(data);
   };
 
-  return { requestSync };
+  /**
+   * ジョブの現在のステータスを取得する
+   */
+  const getJobStatus = async (jobId: string): Promise<SyncJobStatus | null> => {
+    const { data, error } = await supabase
+      .from('sync_operations')
+      .select('*')
+      .eq('id', jobId)
+      .maybeSingle<SyncOperationRow>();
+
+    if (error) {
+      logger.error('Failed to get job status', error);
+      return null;
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    return mapStatus(data);
+  };
+
+  return { requestSync, getJobStatus };
 }

@@ -1,4 +1,4 @@
-import { MessageFlags, type ChatInputCommandInteraction } from 'discord.js';
+import type { ChatInputCommandInteraction } from 'discord.js';
 
 import { logger } from '../../../infrastructure/logging/logger';
 import { createChatService } from '../../chat/chat-service';
@@ -14,11 +14,11 @@ export function createChatController(service = createChatService()): CommandCont
   return async (interaction: ChatInputCommandInteraction): Promise<void> => {
     const query = interaction.options.getString('query');
     if (!query) {
-      await interaction.reply({ content: 'query を入力してください。', ephemeral: true });
+      await interaction.reply({ content: 'query を入力してください。' });
       return;
     }
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply();
 
     try {
       const answer = await service.answer({

@@ -1,4 +1,5 @@
 import type { Client } from 'discord.js';
+import pLimit from 'p-limit';
 
 import { embedWindow } from '../../infrastructure/gemini/embedding-service';
 import { logger } from '../../infrastructure/logging/logger';
@@ -34,7 +35,7 @@ export function createEmbedWorker(_client: Client, config: EmbedWorkerConfig = {
   const tokenCounter = createDefaultTokenCounter();
   const pollIntervalMs = config.pollIntervalMs ?? 500;
   const batchSize = config.batchSize ?? 500;
-  const concurrency = config.concurrency ?? 30;
+  const concurrency = config.concurrency ?? 50;
   const maxAttempts = config.maxAttempts ?? 5;
 
   /**
@@ -221,18 +222,17 @@ export function createEmbedWorker(_client: Client, config: EmbedWorkerConfig = {
 
     logger.info(`[Embed Worker] Processing batch of ${batch.length} windows...`);
 
-    // 並列処理（concurrency で制限）
-    const promises: Promise<boolean>[] = [];
-    for (let i = 0; i < batch.length; i += concurrency) {
-      const chunk = batch.slice(i, i + concurrency);
-      const chunkPromises = chunk.map((item) => processWindow(item));
-      promises.push(...chunkPromises);
+    const limit = pLimit(concurrency);
 
-      // 並列数制限のため、chunk ごとに await
-      await Promise.allSettled(chunkPromises);
-    }
+    // すべてのタスクを並列実行
+    const results = await Promise.allSettled(
+      batch.map((item) =>
+        limit(async () => {
+          return await processWindow(item);
+        })
+      )
+    );
 
-    const results = await Promise.allSettled(promises);
     const succeeded = results.filter((r) => r.status === 'fulfilled' && r.value === true).length;
     const failed = results.length - succeeded;
 

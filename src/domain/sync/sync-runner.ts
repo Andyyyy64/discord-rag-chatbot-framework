@@ -294,15 +294,27 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
 
     try {
       // 進捗を初期化
-      await updateProgress(job.id, 0, 100, 'メッセージ取得中...');
+      await updateProgress(job.id, 0, 1, '同期を開始しています...');
 
-      // メッセージを取得
+      // メッセージを取得（進捗コールバック付き）
       const since = job.since ? new Date(job.since) : undefined;
       logger.info(
         `Starting message fetch from guild ${job.guild_id} (since: ${since?.toISOString() ?? 'beginning'})`
       );
 
-      const messages = await fetcher.fetchMessagesFromGuild(job.guild_id, { since });
+      const messages = await fetcher.fetchMessagesFromGuild(job.guild_id, {
+        since,
+        onProgress: async (completed, total, phase) => {
+          // フェーズ1: メッセージ取得（全体の0-70%）
+          const percentage = Math.floor((completed / total) * 70);
+          await updateProgress(
+            job.id,
+            percentage,
+            100,
+            `📥 ${phase}: ${completed}/${total}チャンネル`
+          );
+        },
+      });
 
       logger.info(`✓ Fetched ${messages.length} messages from guild ${job.guild_id}`);
 
@@ -311,26 +323,23 @@ export function createSyncRunner(client: Client, config: SyncRunnerConfig = {}) 
         return;
       }
 
-      // 進捗を更新
-      await updateProgress(job.id, 30, 100, 'メッセージ保存中...');
+      // フェーズ2: メッセージ保存（70-80%）
+      await updateProgress(job.id, 70, 100, `💾 ${messages.length}件のメッセージを保存中...`);
       logger.info(`Saving ${messages.length} messages to database...`);
 
-      // メッセージを保存
       await saveMessages(job.guild_id, messages);
       logger.info(`✓ Saved ${messages.length} messages`);
 
-      // 進捗を更新
-      await updateProgress(job.id, 60, 100, 'チャンク処理中...');
+      // フェーズ3: チャンク処理（80-95%）
+      await updateProgress(job.id, 80, 100, `🔨 チャンク処理中...`);
       logger.info(`Starting chunking for ${messages.length} messages...`);
 
-      // チャンク化と embed_queue への投入
       await createWindows(job.guild_id, messages);
       logger.info(`✓ Chunking complete`);
 
-      // 進捗を更新
-      await updateProgress(job.id, 90, 100, 'カーソル更新中...');
+      // フェーズ4: カーソル更新（95-100%）
+      await updateProgress(job.id, 95, 100, '🔄 カーソル更新中...');
 
-      // sync_cursors を更新
       const { error: cursorError } = await supabase.from('sync_cursors').upsert({
         guild_id: job.guild_id,
         last_synced_at: new Date().toISOString(),
