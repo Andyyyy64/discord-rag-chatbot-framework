@@ -130,6 +130,8 @@ run gcloud run deploy "$SERVICE_NAME" \
   --platform managed \
   --allow-unauthenticated \
   --project "$PROJECT_ID" \
+  --timeout 1800 \
+  --memory 1Gi \
   --set-env-vars "$ENV_VARS_STRING"
 
 echo "\n✅ Deployment completed."
